@@ -22,4 +22,5 @@ jobs:
         env:
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
-        run: echo "Deployment URL: https://$OWNER.github.io/$REPO/"
+        run: |
+          echo "Deployment URL: https://$OWNER.github.io/$REPO/"
