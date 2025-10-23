@@ -19,4 +19,7 @@ jobs:
           publish_dir: .
 
       - name: Output deployment URL
-        run: echo "Deployment URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: echo "Deployment URL: https://$OWNER.github.io/$REPO/"
