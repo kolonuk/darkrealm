@@ -104,7 +104,6 @@ class MainScene extends Phaser.Scene {
                 const roomCost = { gold: 25 }; // Cost for a Lair tile
                 if (this.gold >= roomCost.gold) {
                     this.gold -= roomCost.gold;
-                    this.stone -= roomCost.stone;
                     tile.tileType = 'room_lair';
                     tile.gameObject.setTint(0x00FF00); // Green for Lair
                 } else {
