@@ -12,8 +12,7 @@ This project is automatically deployed to GitHub Pages when changes are pushed t
 
 To enable GitHub Pages for your repository:
 
-1. Go to your repository's **Settings** tab.
-2. In the **Code and automation** section of the side menu, click on **Pages**.
-3. Under **Build and deployment**, for the **Source**, select **Deploy from a branch**.
-4. Under **Branch**, select `gh-pages` and `/ (root)` and click **Save**.
-5. Your game will be available at `https://<your-username>.github.io/<your-repo-name>/`.
+1.  Go to your repository's **Settings** tab.
+2.  In the **Code and automation** section of the side menu, click on **Pages**.
+3.  Under **Build and deployment**, for the **Source**, select **GitHub Actions**.
+4.  Your game will be available at the URL displayed in the workflow output after the action runs.
