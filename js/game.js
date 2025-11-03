@@ -1,225 +1,308 @@
-class MainScene extends Phaser.Scene {
-    constructor() {
-        super({ key: 'MainScene' });
+// Three.js scene setup
+let scene, camera, renderer, controls;
+let dungeon = [];
+const dungeonWidth = 30;
+const dungeonHeight = 20;
+const tileSize = 1;
+let buildMode = null;
+let ghostObject = null;
+let creatures = [];
+
+// Game Resources
+let gold = 5000;
+let stone = 2500;
+const roomCosts = {
+    lair: { gold: 100, stone: 0 }
+};
+
+class Creature {
+    constructor(x, z, type) {
+        this.type = type;
+        const geometry = new THREE.CapsuleGeometry(0.25, 0.5, 4, 8);
+        const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, 0.5, z);
+        scene.add(this.mesh);
+        this.target = null;
+        this.buildJob = null;
     }
 
-    preload() {
-        this.load.image('wall', 'assets/wall.png');
-        this.load.image('ground', 'assets/ground.png');
-        this.load.image('ogre', 'assets/ogre.png');
+    moveTo(target) {
+        this.target = target;
     }
 
-    create() {
-        // Set up game objects here
-        this.gold = 5000; // Starting gold
-        this.stone = 2500; // Starting stone
-        this.dreadstones = 0; // Starting dreadstones
-        this.dungeon = this.createDungeon(30, 20);
-        this.placeDungeonHeart(15, 10);
-        this.drawDungeon();
-        this.input.on('pointerdown', this.handleTileClick, this);
-        this.buildMode = null; // Can be 'lair', 'hatchery', etc.
-
-        // Simple UI to enter build mode
-        this.add.text(10, 10, 'Build Lair (L)', { fill: '#fff' }).setInteractive().on('pointerdown', () => {
-            this.buildMode = 'lair';
-        });
-        this.add.text(10, 30, 'Summon Ogre (O)', { fill: '#fff' }).setInteractive().on('pointerdown', () => {
-            this.summonCreature('ogre');
-        });
-
-        this.creatures = [];
-
-        // Resource display
-        this.goldText = this.add.text(680, 10, 'Gold: ' + this.gold, { fill: '#ffd700' });
-        this.stoneText = this.add.text(680, 30, 'Stone: ' + this.stone, { fill: '#c0c0c0' });
-        this.dreadstoneText = this.add.text(680, 50, 'Dreadstones: ' + this.dreadstones, { fill: '#ff00ff' });
-
-        // Hamburger menu
-        this.menuButton = this.add.text(10, 50, 'Menu', { fill: '#fff' }).setInteractive();
-        this.menu = this.add.group();
-        this.menu.setVisible(false);
-
-        let restartButton = this.add.text(10, 70, 'Restart', { fill: '#fff' }).setInteractive();
-        restartButton.on('pointerdown', () => this.scene.restart());
-        this.menu.add(restartButton);
-
-        this.menu.add(this.add.text(10, 90, 'Log Out', { fill: '#fff' }));
-        this.menu.add(this.add.text(10, 110, 'Help', { fill: '#fff' }));
-        this.menu.add(this.add.text(10, 130, 'Encyclopedia', { fill: '#fff' }));
-        this.menu.add(this.add.text(10, 150, 'Settings', { fill: '#fff' }));
-        this.menu.add(this.add.text(10, 170, 'Tournament Games', { fill: '#fff' }));
-
-        this.menuButton.on('pointerdown', () => {
-            this.menu.setVisible(!this.menu.visible);
-        });
-
-        // Zoom functionality
-        this.cameras.main.setZoom(1);
-        this.input.on('wheel', (pointer, gameObjects, deltaX, deltaY, deltaZ) => {
-            if (deltaY > 0) {
-                this.cameras.main.zoom = Math.max(0.5, this.cameras.main.zoom - 0.1);
-            }
-            if (deltaY < 0) {
-                this.cameras.main.zoom = Math.min(2, this.cameras.main.zoom + 0.1);
-            }
-        });
+    workOn(job) {
+        this.buildJob = job;
     }
 
     update() {
-        this.goldText.setText('Gold: ' + this.gold);
-        this.stoneText.setText('Stone: ' + this.stone);
-        this.dreadstoneText.setText('Dreadstones: ' + this.dreadstones);
-    }
+        if (this.target) {
+            const direction = this.target.clone().sub(this.mesh.position).normalize();
+            this.mesh.position.add(direction.multiplyScalar(0.05));
 
-    summonCreature(creatureType) {
-        if (creatureType === 'ogre') {
-            const creatureCost = { gold: 300 };
-            if (this.gold >= creatureCost.gold) {
-                this.gold -= creatureCost.gold;
-                let creature = new Creature(this, 400, 300, 'ogre');
-                this.creatures.push(creature);
-            } else {
-                console.log("Not enough gold to summon Ogre!");
-            }
-        }
-    }
-
-    handleTileClick(pointer) {
-        if (this.buildMode) {
-            this.buildRoom(pointer);
-        } else {
-            this.digTile(pointer);
-        }
-    }
-
-    buildRoom(pointer) {
-        const TILE_SIZE = 32;
-        const x = Math.floor(pointer.worldX / TILE_SIZE);
-        const y = Math.floor(pointer.worldY / TILE_SIZE);
-
-        if (x >= 0 && x < this.dungeon[0].length && y >= 0 && y < this.dungeon.length) {
-            let tile = this.dungeon[y][x];
-            if (tile.isDug && tile.tileType === 'ground') {
-                const roomCost = { gold: 25 }; // Cost for a Lair tile
-                if (this.gold >= roomCost.gold) {
-                    this.gold -= roomCost.gold;
-                    tile.tileType = 'room_lair';
-                    tile.gameObject.setTint(0x00FF00); // Green for Lair
-                } else {
-                    console.log("Not enough resources!");
+            if (this.mesh.position.distanceTo(this.target) < 0.1) {
+                this.target = null;
+                if (this.buildJob) {
+                    setTimeout(() => {
+                        buildRoom(this.buildJob.x, this.buildJob.y, this.buildJob.type);
+                        scene.remove(this.mesh);
+                        creatures = creatures.filter(c => c !== this);
+                    }, 2000); // 2 second build time
                 }
-            }
-        }
-        this.buildMode = null;
-    }
-
-    digTile(pointer) {
-        const TILE_SIZE = 32;
-        const x = Math.floor(pointer.worldX / TILE_SIZE);
-        const y = Math.floor(pointer.worldY / TILE_SIZE);
-
-        if (x >= 0 && x < this.dungeon[0].length && y >= 0 && y < this.dungeon.length) {
-            let tile = this.dungeon[y][x];
-            if (tile.isWall) {
-                tile.isDug = true;
-                tile.isWall = false;
-                tile.tileType = 'ground';
-
-                if (tile.hasGold) {
-                    this.gold += 100;
-                    tile.hasGold = false;
-                }
-                if (tile.hasStone) {
-                    this.stone += 50;
-                    tile.hasStone = false;
-                }
-                tile.gameObject.setTexture('ground');
-            }
-        }
-    }
-
-    createDungeon(width, height) {
-        let dungeon = [];
-        for (let y = 0; y < height; y++) {
-            let row = [];
-            for (let x = 0; x < width; x++) {
-                row.push({
-                    x: x,
-                    y: y,
-                    isDug: false,
-                    isWall: true,
-                    gameObject: null,
-                    hasGold: Math.random() < 0.1,
-                    hasStone: Math.random() < 0.2,
-                    tileType: 'wall'
-                });
-            }
-            dungeon.push(row);
-        }
-        return dungeon;
-    }
-
-    placeDungeonHeart(centerX, centerY) {
-        const heartSize = 3;
-        const startX = centerX - Math.floor(heartSize / 2);
-        const startY = centerY - Math.floor(heartSize / 2);
-
-        for (let y = startY; y < startY + heartSize; y++) {
-            for (let x = startX; x < startX + heartSize; x++) {
-                let tile = this.dungeon[y][x];
-                tile.isDug = true;
-                tile.isWall = false;
-                tile.tileType = 'room_heart';
-            }
-        }
-
-        const clearRadius = 5;
-        for (let y = centerY - clearRadius; y <= centerY + clearRadius; y++) {
-            for (let x = centerX - clearRadius; x <= centerX + clearRadius; x++) {
-                if (x >= 0 && x < this.dungeon[0].length && y >= 0 && y < this.dungeon.length) {
-                    let tile = this.dungeon[y][x];
-                    if (tile.isWall && tile.tileType !== 'room_heart') {
-                        let distance = Phaser.Math.Distance.Between(centerX, centerY, x, y);
-                        if (distance <= clearRadius) {
-                            tile.isDug = true;
-                            tile.isWall = false;
-                            tile.tileType = 'ground';
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    drawDungeon() {
-        const TILE_SIZE = 32;
-        for (let y = 0; y < this.dungeon.length; y++) {
-            for (let x = 0; x < this.dungeon[y].length; x++) {
-                let tile = this.dungeon[y][x];
-                let tileSprite;
-
-                if (tile.tileType === 'wall') {
-                    tileSprite = this.add.sprite(x * TILE_SIZE, y * TILE_SIZE, 'wall').setOrigin(0);
-                } else {
-                    tileSprite = this.add.sprite(x * TILE_SIZE, y * TILE_SIZE, 'ground').setOrigin(0);
-                    if (tile.tileType === 'room_heart') {
-                        tileSprite.setTint(0xFF0000);
-                    } else if (tile.tileType === 'room_lair') {
-                        tileSprite.setTint(0x00FF00);
-                    }
-                }
-                tile.gameObject = tileSprite;
             }
         }
     }
 }
 
-const config = {
-    type: Phaser.AUTO,
-    width: 800,
-    height: 600,
-    scene: [MainScene]
-};
+function init() {
+    // Scene
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
 
-const game = new Phaser.Game(config);
+    // Camera
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(dungeonWidth / 2, dungeonHeight, dungeonHeight);
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Controls
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(dungeonWidth / 2, 0, dungeonHeight / 2);
+    controls.update();
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0x404040);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    directionalLight.position.set(1, 1, 1);
+    scene.add(directionalLight);
+
+    createDungeon();
+    placeDungeonHeart();
+    updateResourceUI();
+
+    // UI
+    document.getElementById('build-lair').addEventListener('click', () => {
+        enterBuildMode('lair');
+    });
+
+    // Handle window resizing
+    window.addEventListener('resize', onWindowResize, false);
+    // Handle mouse events
+    window.addEventListener('mousemove', onMouseMove, false);
+    window.addEventListener('mousedown', onMouseDown, false);
+
+    animate();
+}
+
+function createDungeon() {
+    const wallGeometry = new THREE.BoxGeometry(tileSize, tileSize, tileSize);
+    const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+
+    for (let y = 0; y < dungeonHeight; y++) {
+        dungeon[y] = [];
+        for (let x = 0; x < dungeonWidth; x++) {
+            const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+            wall.position.set(x, 0, y);
+            wall.userData = {
+                x, y,
+                type: 'wall',
+                hasGold: Math.random() < 0.1,
+                hasStone: Math.random() < 0.2
+            };
+            scene.add(wall);
+            dungeon[y][x] = wall;
+        }
+    }
+}
+
+function placeDungeonHeart() {
+    const heartSize = 3;
+    const centerX = Math.floor(dungeonWidth / 2);
+    const centerY = Math.floor(dungeonHeight / 2);
+
+    const heartMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+
+    for (let y = centerY - 1; y <= centerY + 1; y++) {
+        for (let x = centerX - 1; x <= centerX + 1; x++) {
+            if (dungeon[y] && dungeon[y][x]) {
+                const wall = dungeon[y][x];
+                scene.remove(wall);
+                if (x === centerX && y === centerY) {
+                    const heart = new THREE.Mesh(new THREE.BoxGeometry(tileSize, tileSize, tileSize), heartMaterial);
+                    heart.position.set(x, 0, y);
+                    heart.userData = { x, y, type: 'heart' };
+                    scene.add(heart);
+                    dungeon[y][x] = heart;
+                } else {
+                    dungeon[y][x] = null; // Dug out area around the heart
+                }
+            }
+        }
+    }
+}
+
+function updateResourceUI() {
+    document.getElementById('gold').textContent = `Gold: ${gold}`;
+    document.getElementById('stone').textContent = `Stone: ${stone}`;
+}
+
+function enterBuildMode(type) {
+    buildMode = type;
+    const cost = roomCosts[type];
+    if (gold < cost.gold || stone < cost.stone) {
+        console.log("Not enough resources!");
+        buildMode = null;
+        return;
+    }
+
+    if (ghostObject) {
+        scene.remove(ghostObject);
+    }
+    const geometry = new THREE.BoxGeometry(tileSize, tileSize, tileSize);
+    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
+    ghostObject = new THREE.Mesh(geometry, material);
+    ghostObject.visible = false;
+    scene.add(ghostObject);
+}
+
+function onMouseMove(event) {
+    if (!buildMode) return;
+
+    const mouse = new THREE.Vector2();
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, camera);
+
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const intersectPoint = new THREE.Vector3();
+    raycaster.ray.intersectPlane(plane, intersectPoint);
+
+    if (intersectPoint) {
+        const x = Math.floor(intersectPoint.x);
+        const y = Math.floor(intersectPoint.z);
+
+        if (x >= 0 && x < dungeonWidth && y >= 0 && y < dungeonHeight) {
+            ghostObject.position.set(x, 0, y);
+            ghostObject.visible = true;
+
+            if (dungeon[y][x] === null) {
+                ghostObject.material.color.set(0x00ff00); // Green for valid
+            } else {
+                ghostObject.material.color.set(0xff0000); // Red for invalid
+            }
+        } else {
+            ghostObject.visible = false;
+        }
+    }
+}
+
+function onMouseDown(event) {
+    // Prevent clicks on the UI from affecting the game world
+    if (event.target !== renderer.domElement) {
+        return;
+    }
+
+    if (buildMode) {
+        startBuilding(event);
+    } else {
+        digTile(event);
+    }
+}
+
+function digTile(event) {
+    const mouse = new THREE.Vector2();
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, camera);
+
+    const intersects = raycaster.intersectObjects(scene.children);
+
+    if (intersects.length > 0) {
+        const object = intersects[0].object;
+        if (object.userData.type === 'wall') {
+            const { x, y, hasGold, hasStone } = object.userData;
+            if (hasGold) {
+                gold += 100;
+            }
+            if (hasStone) {
+                stone += 50;
+            }
+            updateResourceUI();
+            scene.remove(object);
+            dungeon[y][x] = null;
+        }
+    }
+}
+
+function startBuilding(event) {
+    const mouse = new THREE.Vector2();
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, camera);
+
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const intersectPoint = new THREE.Vector3();
+    raycaster.ray.intersectPlane(plane, intersectPoint);
+
+    if (intersectPoint) {
+        const x = Math.floor(intersectPoint.x);
+        const y = Math.floor(intersectPoint.z);
+        const cost = roomCosts[buildMode];
+
+        if (dungeon[y] && dungeon[y][x] === null && gold >= cost.gold && stone >= cost.stone) {
+            gold -= cost.gold;
+            stone -= cost.stone;
+            updateResourceUI();
+
+            // Create an Ogre to build the room
+            const ogre = new Creature(dungeonWidth / 2, dungeonHeight / 2, 'ogre');
+            creatures.push(ogre);
+            ogre.moveTo(new THREE.Vector3(x, 0.5, y));
+            ogre.workOn({ x, y, type: buildMode });
+
+            // Exit build mode
+            buildMode = null;
+            scene.remove(ghostObject);
+            ghostObject = null;
+        }
+    }
+}
+
+function buildRoom(x, y, type) {
+    const roomGeometry = new THREE.BoxGeometry(tileSize, tileSize, tileSize);
+    let roomMaterial;
+    if (type === 'lair') {
+        roomMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff }); // Blue for Lair
+    }
+    const room = new THREE.Mesh(roomGeometry, roomMaterial);
+    room.position.set(x, 0, y);
+    room.userData = { x, y, type: type };
+    scene.add(room);
+    dungeon[y][x] = room;
+}
+
+
+function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    creatures.forEach(creature => creature.update());
+    renderer.render(scene, camera);
+}
+
+init();
