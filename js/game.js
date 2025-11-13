@@ -7,49 +7,128 @@ const tileSize = 1;
 let buildMode = null;
 let ghostObject = null;
 let creatures = [];
+let jobQueue = [];
 
 // Game Resources
 let gold = 5000;
 let stone = 2500;
 const roomCosts = {
-    lair: { gold: 100, stone: 0 }
+    'spawning-pit': { gold: 150, stone: 0 }
 };
 
-class Creature {
-    constructor(x, z, type) {
-        this.type = type;
-        const geometry = new THREE.CapsuleGeometry(0.25, 0.5, 4, 8);
+class Ogre {
+    constructor(x, z) {
+        this.type = 'ogre';
+
+        const bodyGeometry = new THREE.SphereGeometry(0.3, 8, 6);
+        const headGeometry = new THREE.SphereGeometry(0.2, 8, 6);
+        const armGeometry = new THREE.CapsuleGeometry(0.1, 0.4, 4, 8);
         const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
-        this.mesh = new THREE.Mesh(geometry, material);
-        this.mesh.position.set(x, 0.5, z);
+
+        this.mesh = new THREE.Group();
+        const body = new THREE.Mesh(bodyGeometry, material);
+        const head = new THREE.Mesh(headGeometry, material);
+        const leftArm = new THREE.Mesh(armGeometry, material);
+        const rightArm = new THREE.Mesh(armGeometry, material);
+
+        body.position.y = 0.3;
+        head.position.y = 0.6;
+        head.position.z = 0.1;
+        leftArm.position.set(-0.3, 0.4, 0);
+        leftArm.rotation.z = Math.PI / 4;
+        rightArm.position.set(0.3, 0.4, 0);
+        rightArm.rotation.z = -Math.PI / 4;
+
+        this.mesh.add(body);
+        this.mesh.add(head);
+        this.mesh.add(leftArm);
+        this.mesh.add(rightArm);
+
+        this.mesh.position.set(x, 0, z);
         scene.add(this.mesh);
-        this.target = null;
-        this.buildJob = null;
+        this.job = null;
+        this.path = null;
+        this.state = 'idle'; // idle, moving, working, returning
+        this.workTimer = 0;
+        this.workDuration = 0;
     }
 
-    moveTo(target) {
-        this.target = target;
-    }
-
-    workOn(job) {
-        this.buildJob = job;
+    findJob() {
+        if (jobQueue.length > 0) {
+            this.job = jobQueue.shift();
+            const startNode = { x: Math.floor(this.mesh.position.x), y: Math.floor(this.mesh.position.z) };
+            const endNode = { x: this.job.x, y: this.job.y };
+            this.path = findPath(startNode, endNode);
+            if (this.path) {
+                this.state = 'moving';
+            } else {
+                jobQueue.unshift(this.job);
+                this.job = null;
+            }
+        }
     }
 
     update() {
-        if (this.target) {
-            const direction = this.target.clone().sub(this.mesh.position).normalize();
-            this.mesh.position.add(direction.multiplyScalar(0.05));
-
-            if (this.mesh.position.distanceTo(this.target) < 0.1) {
-                this.target = null;
-                if (this.buildJob) {
-                    setTimeout(() => {
-                        buildRoom(this.buildJob.x, this.buildJob.y, this.buildJob.type);
-                        scene.remove(this.mesh);
-                        creatures = creatures.filter(c => c !== this);
-                    }, 2000); // 2 second build time
+        switch (this.state) {
+            case 'idle':
+                this.findJob();
+                break;
+            case 'moving':
+                if (this.path.length > 0) {
+                    const targetNode = this.path[0];
+                    const targetPosition = new THREE.Vector3(targetNode.x, 0, targetNode.y);
+                    const direction = targetPosition.clone().sub(this.mesh.position).normalize();
+                    this.mesh.position.add(direction.multiplyScalar(0.05));
+                    if (this.mesh.position.distanceTo(targetPosition) < 0.1) {
+                        this.path.shift();
+                    }
+                } else {
+                    this.state = 'working';
+                     this.workDuration = 200; // 2 seconds at 60fps
+                     this.workTimer = 200;
                 }
-            }
+                break;
+            case 'working':
+                this.workTimer--;
+                if (this.workTimer <= 0) {
+                    if (this.job.type === 'dig') {
+                        const { x, y } = this.job;
+                        const object = dungeon[y][x];
+                        if (object && object.userData.type === 'wall') {
+                             if (object.userData.hasGold) {
+                                gold += 100;
+                            }
+                            if (object.userData.hasStone) {
+                                stone += 50;
+                            }
+                            updateResourceUI();
+                            scene.remove(object);
+                            dungeon[y][x] = null;
+                        }
+                    } else if (this.job.type === 'build') {
+                        buildRoom(this.job.x, this.job.y, this.job.roomType);
+                    }
+                    const heartPosition = new THREE.Vector3(Math.floor(dungeonWidth / 2), 0, Math.floor(dungeonHeight / 2));
+                    const startNode = { x: Math.floor(this.mesh.position.x), y: Math.floor(this.mesh.position.z) };
+                    const endNode = { x: Math.floor(heartPosition.x), y: Math.floor(heartPosition.z) };
+                    this.path = findPath(startNode, endNode);
+                    this.state = 'returning';
+                }
+                break;
+            case 'returning':
+                if (this.path.length > 0) {
+                    const targetNode = this.path[0];
+                    const targetPosition = new THREE.Vector3(targetNode.x, 0, targetNode.y);
+                    const direction = targetPosition.clone().sub(this.mesh.position).normalize();
+                    this.mesh.position.add(direction.multiplyScalar(0.05));
+                    if (this.mesh.position.distanceTo(targetPosition) < 0.1) {
+                        this.path.shift();
+                    }
+                } else {
+                    this.state = 'idle';
+                    this.job = null;
+                }
+                break;
         }
     }
 }
@@ -84,9 +163,12 @@ function init() {
     placeDungeonHeart();
     updateResourceUI();
 
+    const ogre = new Ogre(Math.floor(dungeonWidth / 2), Math.floor(dungeonHeight / 2));
+    creatures.push(ogre);
+
     // UI
-    document.getElementById('build-lair').addEventListener('click', () => {
-        enterBuildMode('lair');
+    document.getElementById('build-spawning-pit').addEventListener('click', () => {
+        enterBuildMode('spawning-pit');
     });
 
     // Handle window resizing
@@ -94,6 +176,7 @@ function init() {
     // Handle mouse events
     window.addEventListener('mousemove', onMouseMove, false);
     window.addEventListener('mousedown', onMouseDown, false);
+    window.addEventListener('dblclick', onDoubleClick, false);
 
     animate();
 }
@@ -210,7 +293,16 @@ function onMouseDown(event) {
 
     if (buildMode) {
         startBuilding(event);
-    } else {
+    }
+}
+
+function onDoubleClick(event) {
+    // Prevent clicks on the UI from affecting the game world
+    if (event.target !== renderer.domElement) {
+        return;
+    }
+
+    if (!buildMode) {
         digTile(event);
     }
 }
@@ -228,16 +320,8 @@ function digTile(event) {
     if (intersects.length > 0) {
         const object = intersects[0].object;
         if (object.userData.type === 'wall') {
-            const { x, y, hasGold, hasStone } = object.userData;
-            if (hasGold) {
-                gold += 100;
-            }
-            if (hasStone) {
-                stone += 50;
-            }
-            updateResourceUI();
-            scene.remove(object);
-            dungeon[y][x] = null;
+            const { x, y } = object.userData;
+            addJobToQueue({ type: 'dig', x, y });
         }
     }
 }
@@ -264,11 +348,7 @@ function startBuilding(event) {
             stone -= cost.stone;
             updateResourceUI();
 
-            // Create an Ogre to build the room
-            const ogre = new Creature(dungeonWidth / 2, dungeonHeight / 2, 'ogre');
-            creatures.push(ogre);
-            ogre.moveTo(new THREE.Vector3(x, 0.5, y));
-            ogre.workOn({ x, y, type: buildMode });
+            addJobToQueue({ type: 'build', x, y, roomType: buildMode });
 
             // Exit build mode
             buildMode = null;
@@ -281,8 +361,8 @@ function startBuilding(event) {
 function buildRoom(x, y, type) {
     const roomGeometry = new THREE.BoxGeometry(tileSize, tileSize, tileSize);
     let roomMaterial;
-    if (type === 'lair') {
-        roomMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff }); // Blue for Lair
+    if (type === 'spawning-pit') {
+        roomMaterial = new THREE.MeshStandardMaterial({ color: 0x8A2BE2 }); // Blue-Violet for Spawning Pit
     }
     const room = new THREE.Mesh(roomGeometry, roomMaterial);
     room.position.set(x, 0, y);
@@ -298,11 +378,141 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+function findPath(start, end) {
+    const openSet = [start];
+    const closedSet = [];
+    const cameFrom = {};
+
+    const gScore = {};
+    gScore[`${start.x},${start.y}`] = 0;
+
+    const fScore = {};
+    fScore[`${start.x},${start.y}`] = heuristic(start, end);
+
+    while (openSet.length > 0) {
+        let current = openSet[0];
+        for (let i = 1; i < openSet.length; i++) {
+            if (fScore[`${openSet[i].x},${openSet[i].y}`] < fScore[`${current.x},${current.y}`]) {
+                current = openSet[i];
+            }
+        }
+
+        if (current.x === end.x && current.y === end.y) {
+            return reconstructPath(cameFrom, current);
+        }
+
+        openSet.splice(openSet.indexOf(current), 1);
+        closedSet.push(current);
+
+        const neighbors = getNeighbors(current);
+        for (const neighbor of neighbors) {
+            if (closedSet.find(node => node.x === neighbor.x && node.y === neighbor.y)) {
+                continue;
+            }
+
+            const tentativeGScore = gScore[`${current.x},${current.y}`] + 1;
+            if (!openSet.find(node => node.x === neighbor.x && node.y === neighbor.y)) {
+                openSet.push(neighbor);
+            } else if (tentativeGScore >= gScore[`${neighbor.x},${neighbor.y}`]) {
+                continue;
+            }
+
+            cameFrom[`${neighbor.x},${neighbor.y}`] = current;
+            gScore[`${neighbor.x},${neighbor.y}`] = tentativeGScore;
+            fScore[`${neighbor.x},${neighbor.y}`] = gScore[`${neighbor.x},${neighbor.y}`] + heuristic(neighbor, end);
+        }
+    }
+
+    return null; // No path found
+}
+
+function getNeighbors(node) {
+    const neighbors = [];
+    const { x, y } = node;
+
+    if (x > 0 && dungeon[y][x - 1] === null) neighbors.push({ x: x - 1, y });
+    if (x < dungeonWidth - 1 && dungeon[y][x + 1] === null) neighbors.push({ x: x + 1, y });
+    if (y > 0 && dungeon[y - 1][x] === null) neighbors.push({ x, y: y - 1 });
+    if (y < dungeonHeight - 1 && dungeon[y + 1][x] === null) neighbors.push({ x, y: y + 1 });
+
+    return neighbors;
+}
+
+function heuristic(a, b) {
+    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function reconstructPath(cameFrom, current) {
+    const totalPath = [current];
+    while (cameFrom[`${current.x},${current.y}`]) {
+        current = cameFrom[`${current.x},${current.y}`];
+        totalPath.unshift(current);
+    }
+    return totalPath;
+}
+
 function animate() {
     requestAnimationFrame(animate);
     controls.update();
     creatures.forEach(creature => creature.update());
+    updateJobQueueUI();
     renderer.render(scene, camera);
+}
+
+function addJobToQueue(job) {
+    if (jobQueue.length < 5) {
+        jobQueue.push(job);
+        updateJobQueueUI();
+    }
+}
+
+function updateJobQueueUI() {
+    const jobList = document.getElementById('job-list');
+    jobList.innerHTML = '';
+
+    // Find the Ogre and its job
+    const ogre = creatures.find(c => c.type === 'ogre' && c.job);
+    const activeJob = ogre ? ogre.job : null;
+
+    // Display the active job with progress
+    if (activeJob) {
+        const listItem = document.createElement('li');
+        listItem.classList.add('job-item');
+
+        const jobText = document.createElement('span');
+        jobText.textContent = `${activeJob.type.charAt(0).toUpperCase() + activeJob.type.slice(1)} (${activeJob.x}, ${activeJob.y})`;
+        listItem.appendChild(jobText);
+
+        const progressBar = document.createElement('div');
+        progressBar.classList.add('progress-bar');
+        const progressBarInner = document.createElement('div');
+        progressBarInner.classList.add('progress-bar-inner');
+        const progress = ogre.state === 'working' ? (1 - (ogre.workTimer / ogre.workDuration)) * 100 : 0;
+        progressBarInner.style.width = `${progress}%`;
+        progressBar.appendChild(progressBarInner);
+        listItem.appendChild(progressBar);
+
+        jobList.appendChild(listItem);
+    }
+
+    // Display the rest of the job queue
+    jobQueue.forEach(job => {
+        const listItem = document.createElement('li');
+        listItem.classList.add('job-item');
+
+        const jobText = document.createElement('span');
+        jobText.textContent = `${job.type.charAt(0).toUpperCase() + job.type.slice(1)} (${job.x}, ${job.y})`;
+        listItem.appendChild(jobText);
+
+        const progressBar = document.createElement('div');
+        progressBar.classList.add('progress-bar');
+        const progressBarInner = document.createElement('div');
+        progressBarInner.classList.add('progress-bar-inner');
+        progressBar.appendChild(progressBarInner);
+        listItem.appendChild(progressBar);
+
+        jobList.appendChild(listItem);
+    });
 }
 
 init();
